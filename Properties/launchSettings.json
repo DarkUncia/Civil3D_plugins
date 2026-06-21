@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Civil 3D 2025": {
+      "commandName": "Executable",
+      "executablePath": "C:\\Program Files\\Autodesk\\AutoCAD 2025\\acad.exe",
+      "commandLineArgs": "/p \"<<C3D_RUS>>\" /product \"C3D\" /language \"ru-RU\"",
+      "workingDirectory": "C:\\Program Files\\Autodesk\\AutoCAD 2025\\",
+      "environmentVariables": {}
+    }
+  }
+}
