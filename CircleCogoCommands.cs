@@ -28,11 +28,17 @@ namespace Civil3D_plugins
             CivilDocument civilDoc = CivilApplication.ActiveDocument;
 
             // --- НАСТРОЙКИ ---
-            double searchRadius = 1.0; // Радиус поиска текста (только для штриховок)
+            double searchRadius = 1.5; // Радиус поиска текста вокруг объектов
             string layerError = "_АНАЛИЗ_ОШИБОК";
+            string layerWater = "ВОДОЕМ"; // Имя целевого слоя для водных объектов
 
+            // ФИЛЬТР ВЫСОТ: Все числа вне этого диапазона (диаметры труб, параметры берез) игнорируются
+            double minValidElevation = 30.0;  // Минимальная правдоподобная отметка земли
+            double maxValidElevation = 350.0; // Максимальная правдоподобная отметка земли
+
+            // Выбираем штриховки, окружности и весь текст для анализа
             TypedValue[] filter = new TypedValue[] {
-                new TypedValue((int)DxfCode.Start, "HATCH,CIRCLE")
+                new TypedValue((int)DxfCode.Start, "HATCH,CIRCLE,TEXT,MTEXT")
             };
 
             PromptSelectionResult sel = ed.GetSelection(new SelectionFilter(filter));
@@ -55,47 +61,96 @@ namespace Civil3D_plugins
                         cogoMap.Add(key, pId);
                 }
 
-                int createdCount = 0;
+                // Списки для разделения логики обработки
+                List<Entity> geometryEntities = new List<Entity>();
+                List<Entity> standaloneTexts = new List<Entity>();
+                HashSet<ObjectId> usedTextIds = new HashSet<ObjectId>();
 
+                // Сортируем выборку пользователя
                 foreach (SelectedObject sObj in sel.Value)
                 {
                     Entity ent = tr.GetObject(sObj.ObjectId, OpenMode.ForRead) as Entity;
                     if (ent == null) continue;
 
+                    // Все объекты со слоя ВОДОЕМ защищаем от превращения в одиночные точки суши
+                    if (ent.Layer.Equals(layerWater, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (ent is Hatch || ent is Circle)
+                        {
+                            geometryEntities.Add(ent);
+                        }
+                        else if (ent is DBText || ent is MText)
+                        {
+                            usedTextIds.Add(ent.ObjectId);
+                        }
+                    }
+                    else
+                    {
+                        if (ent is Circle || ent is Hatch)
+                        {
+                            geometryEntities.Add(ent);
+                        }
+                        else if (ent is DBText || ent is MText)
+                        {
+                            standaloneTexts.Add(ent);
+                        }
+                    }
+                }
+
+                int createdCount = 0;
+
+                // ЭТАП 1: Обработка геометрии (Окружности и Штриховки)
+                foreach (Entity ent in geometryEntities)
+                {
                     Point3d finalPos = Point3d.Origin;
                     bool hasValidZ = false;
                     string description = "Verified_Z";
 
-                    // ВЕРНУЛИ КЛАССНЫЙ ВАРИАНТ ДЛЯ ОКРУЖНОСТЕЙ
                     if (ent is Circle circle)
                     {
-                        if (circle.Center.Z > 0.0001)
+                        Point3d center2D = new Point3d(circle.Center.X, circle.Center.Y, 0);
+                        ObjectId foundTextId;
+                        double? parsedZ = GetZFromTextContent(ed, tr, center2D, searchRadius, minValidElevation, maxValidElevation, out foundTextId);
+
+                        // Если рядом с кругом найден корректный текст, блокируем его от дублирования
+                        if (foundTextId != ObjectId.Null)
+                        {
+                            usedTextIds.Add(foundTextId);
+                        }
+
+                        // Если у круга уже есть нормальный Z в диапазоне
+                        if (circle.Center.Z >= minValidElevation && circle.Center.Z <= maxValidElevation)
                         {
                             finalPos = circle.Center;
                             hasValidZ = true;
                             description = "Circle_GeometricZ";
                         }
+                        // Если круг плоский, но текст рядом успешно прошел фильтрацию по высоте
+                        else if (parsedZ.HasValue)
+                        {
+                            double finalZ = Math.Round(parsedZ.Value, 2);
+                            circle.UpgradeOpen();
+                            circle.Center = new Point3d(circle.Center.X, circle.Center.Y, finalZ);
+
+                            finalPos = new Point3d(center2D.X, center2D.Y, finalZ);
+                            hasValidZ = true;
+                            description = "Circle_TextZ";
+                        }
                         else
                         {
-                            MarkError(circle, 1, layerError); // На слой ошибок и в красный цвет
+                            MarkError(circle, 1, layerError);
                             continue;
                         }
                     }
-                    // ЛОГИКА ДЛЯ ШТРИХОВОК
                     else if (ent is Hatch hatch)
                     {
                         Extents3d ex = hatch.GeometricExtents;
                         Point3d center2D = new Point3d((ex.MinPoint.X + ex.MaxPoint.X) / 2.0, (ex.MinPoint.Y + ex.MaxPoint.Y) / 2.0, 0);
 
-                        double? parsedZ = GetZFromTextContent(ed, tr, center2D, searchRadius);
+                        ObjectId foundTextId;
+                        double? parsedZ = GetZFromTextContent(ed, tr, center2D, searchRadius, minValidElevation, maxValidElevation, out foundTextId);
                         if (parsedZ.HasValue)
                         {
-                            if (parsedZ.Value <= 0.0001)
-                            {
-                                MarkError(hatch, 1, layerError);
-                                continue;
-                            }
-
                             double finalZ = Math.Round(parsedZ.Value, 2);
 
                             hatch.UpgradeOpen();
@@ -104,6 +159,8 @@ namespace Civil3D_plugins
                             finalPos = new Point3d(center2D.X, center2D.Y, finalZ);
                             hasValidZ = true;
                             description = "Hatch_TextZ";
+
+                            if (foundTextId != ObjectId.Null) usedTextIds.Add(foundTextId);
                         }
                         else
                         {
@@ -112,56 +169,86 @@ namespace Civil3D_plugins
                         }
                     }
 
-                    // Создание COGO-точки с затиранием старых дублей
                     if (hasValidZ)
                     {
-                        string key = $"{finalPos.X:F3}_{finalPos.Y:F3}";
-                        if (cogoMap.TryGetValue(key, out ObjectId oldId))
-                        {
-                            var oldP = tr.GetObject(oldId, OpenMode.ForRead) as CogoPoint;
-                            if (oldP != null)
-                            {
-                                oldP.UpgradeOpen();
-                                oldP.Erase();
-                            }
-                            cogoMap.Remove(key);
-                        }
+                        CreateOrReplaceCogoPoint(civilDoc, tr, cogoMap, finalPos, description);
+                        createdCount++;
+                    }
+                }
 
-                        ObjectId newPointId = civilDoc.CogoPoints.Add(finalPos, false);
-                        var newPoint = tr.GetObject(newPointId, OpenMode.ForWrite) as CogoPoint;
-                        if (newPoint != null)
-                        {
-                            newPoint.RawDescription = description;
-                        }
+                // ЭТАП 2: Обработка ОДИНОЧНОГО текста суши (Исключая характеристики деревьев и слой ВОДОЕМ)
+                foreach (Entity textEnt in standaloneTexts)
+                {
+                    if (usedTextIds.Contains(textEnt.ObjectId)) continue;
+
+                    string raw = string.Empty;
+                    Point3d tPos = Point3d.Origin;
+
+                    if (textEnt is DBText t)
+                    {
+                        raw = t.TextString;
+                        tPos = t.Position;
+                    }
+                    else if (textEnt is MText mt)
+                    {
+                        raw = mt.Contents;
+                        tPos = mt.Location;
+                    }
+
+                    string clean = Regex.Replace(raw, @"(\\S+;)|(\\{)|(\\})|(\\[AcLopPhntT])", "");
+                    if (string.IsNullOrWhiteSpace(clean)) continue;
+
+                    if (double.TryParse(clean.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double val))
+                    {
+                        // Применяем фильтр диапазона высот для одиночного текста
+                        if (val < minValidElevation || val > maxValidElevation) continue;
+
+                        double finalZ = Math.Round(val, 2);
+                        Point3d finalPos = new Point3d(tPos.X, tPos.Y, finalZ);
+
+                        CreateOrReplaceCogoPoint(civilDoc, tr, cogoMap, finalPos, "Text_DirectZ");
                         createdCount++;
                     }
                 }
 
                 tr.Commit();
-                ed.WriteMessage($"\n[Готово] Обработано объектов. Создано/обновлено COGO-точек: {createdCount}.");
+                ed.WriteMessage($"\n[Готово] Обработка завершена. Всего создано/обновлено COGO-точек: {createdCount}.");
             }
         }
 
-        private double? GetZFromTextContent(Editor ed, Transaction tr, Point3d center, double rad)
+        private void CreateOrReplaceCogoPoint(CivilDocument civilDoc, Transaction tr, Dictionary<string, ObjectId> cogoMap, Point3d pos, string desc)
         {
+            string key = $"{pos.X:F3}_{pos.Y:F3}";
+            if (cogoMap.TryGetValue(key, out ObjectId oldId))
+            {
+                var oldP = tr.GetObject(oldId, OpenMode.ForWrite) as CogoPoint;
+                if (oldP != null) oldP.Erase();
+
+                cogoMap.Remove(key);
+            }
+            ObjectId newPointId = civilDoc.CogoPoints.Add(pos, false);
+            var newPoint = tr.GetObject(newPointId, OpenMode.ForWrite) as CogoPoint;
+            if (newPoint != null)
+            {
+                newPoint.RawDescription = desc;
+            }
+        }
+        private double? GetZFromTextContent(Editor ed, Transaction tr, Point3d center, double rad, double minZ, double maxZ, out ObjectId foundTextId)
+        {
+            foundTextId = ObjectId.Null;
             var res = ed.SelectCrossingWindow(center.Add(new Vector3d(-rad, -rad, 0)),
-                                              center.Add(new Vector3d(rad, rad, 0)),
-                                              new SelectionFilter(new[] { new TypedValue(0, "TEXT,MTEXT") }));
-
+            center.Add(new Vector3d(rad, rad, 0)),
+            new SelectionFilter(new[] { new TypedValue(0, "TEXT,MTEXT") }));
             if (res.Status != PromptStatus.OK) return null;
-
             Entity bestText = null;
             double minDist = double.MaxValue;
             double foundVal = 0;
-
             foreach (SelectedObject sObj in res.Value)
             {
                 Entity ent = tr.GetObject(sObj.ObjectId, OpenMode.ForRead) as Entity;
                 if (ent == null) continue;
-
                 string raw = string.Empty;
                 Point3d tPos = Point3d.Origin;
-
                 if (ent is DBText t)
                 {
                     raw = t.TextString;
@@ -176,13 +263,12 @@ namespace Civil3D_plugins
                 {
                     continue;
                 }
-
-                string clean = Regex.Replace(raw, @"(\\S+;)|(\\{)|(\\})|(\\[AcLopPhntT])", "");
-
+                string clean = Regex.Replace(raw, @"(\S+;)|(\{)|(\})|(\[AcLopPhntT])", "");
+                if (string.IsNullOrWhiteSpace(clean)) continue;
                 if (double.TryParse(clean.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double val))
                 {
+                    if (val < minZ || val > maxZ) continue;
                     double dist = tPos.DistanceTo(new Point3d(center.X, center.Y, tPos.Z));
-
                     if (dist < minDist)
                     {
                         minDist = dist;
@@ -191,26 +277,30 @@ namespace Civil3D_plugins
                     }
                 }
             }
-            return bestText != null ? foundVal : (double?)null;
+            if (bestText != null)
+            {
+                foundTextId = bestText.ObjectId;
+                return foundVal;
+            }
+            return null;
         }
-
         private void MarkError(Entity e, short colorIndex, string layerName)
         {
             if (!e.IsWriteEnabled) e.UpgradeOpen();
             e.Layer = layerName;
             e.Color = Color.FromColorIndex(ColorMethod.ByAci, colorIndex);
         }
-
         private void EnsureLayerExists(Database db, Transaction tr, string layerName)
         {
             LayerTable lt = tr.GetObject(db.LayerTableId, OpenMode.ForRead) as LayerTable;
+            if (lt == null) return;
             if (!lt.Has(layerName))
             {
                 lt.UpgradeOpen();
                 using (LayerTableRecord ltr = new LayerTableRecord())
                 {
                     ltr.Name = layerName;
-                    ltr.Color = Color.FromColorIndex(ColorMethod.ByAci, 1); // 1 = Красный
+                    ltr.Color = Color.FromColorIndex(ColorMethod.ByAci, 1);
                     lt.Add(ltr);
                     tr.AddNewlyCreatedDBObject(ltr, true);
                 }
@@ -218,3 +308,4 @@ namespace Civil3D_plugins
         }
     }
 }
+
