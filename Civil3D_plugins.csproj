@@ -8,9 +8,13 @@
 		<ImplicitUsings>disable</ImplicitUsings>
 		<Nullable>disable</Nullable>
 		<GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
-		<CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 	</PropertyGroup>
 
+	<ItemGroup>
+		<PackageReference Include="ExcelDataReader" Version="3.7.0" />
+	</ItemGroup>
+	
 	<ItemGroup>
 		<Reference Include="accoremgd">
 			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\accoremgd.dll</HintPath>
@@ -31,6 +35,10 @@
 		<Reference Include="AeccDbMgd">
 			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\C3D\AeccDbMgd.dll</HintPath>
 			<Private>False</Private>
+		</Reference>
+		<Reference Include="AecPropDataMgd">
+		  <HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\ACA\AecPropDataMgd.dll</HintPath>
+		  <Private>False</Private>
 		</Reference>
 	</ItemGroup>
 
