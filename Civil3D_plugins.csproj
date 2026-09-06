@@ -3,18 +3,17 @@
 	<PropertyGroup>
 		<OutputType>Library</OutputType>
 		<TargetFramework>net8.0-windows</TargetFramework>
-		<UseWindowsForms>true</UseWindowsForms>
 		<Platforms>AnyCPU;x64</Platforms>
 		<ImplicitUsings>disable</ImplicitUsings>
 		<Nullable>disable</Nullable>
 		<GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
-		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+		<CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+
+		<!-- ВКЛЮЧАЕМ ПОДДЕРЖКУ ИНТЕРФЕЙСА WINDOWS -->
+		<UseWpf>true</UseWpf>
+		<UseWindowsForms>true</UseWindowsForms>
 	</PropertyGroup>
 
-	<ItemGroup>
-		<PackageReference Include="ExcelDataReader" Version="3.7.0" />
-	</ItemGroup>
-	
 	<ItemGroup>
 		<Reference Include="accoremgd">
 			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\accoremgd.dll</HintPath>
@@ -32,14 +31,24 @@
 			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\ACA\AecBaseMgd.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
+		<Reference Include="AecPropDataMgd">
+			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\ACA\AecPropDataMgd.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
 		<Reference Include="AeccDbMgd">
 			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\C3D\AeccDbMgd.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
-		<Reference Include="AecPropDataMgd">
-		  <HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\ACA\AecPropDataMgd.dll</HintPath>
-		  <Private>False</Private>
-		</Reference>
+	</ItemGroup>
+
+	<!-- ПОДКЛЮЧЕННЫЕ ПАКЕТЫ РАСШИРЕНИЙ -->
+	<ItemGroup>
+		<!-- Официальный пакет Microsoft для нативного чтения и записи .xlsx -->
+		<PackageReference Include="DocumentFormat.OpenXml" Version="3.0.1" />
+
+		<!-- Старые зависимости (оставляем для работы команд экспорта/импорта) -->
+		<PackageReference Include="ExcelDataReader" Version="3.7.0" />
+		<PackageReference Include="ExcelDataReader.DataSet" Version="3.7.0" />
 	</ItemGroup>
 
 </Project>
