@@ -3,398 +3,267 @@ using System.IO;
 using System.Text;
 using System.Collections.Generic;
 using System.Windows.Forms;
-
-// Обязательные пространства имен AutoCAD и Civil 3D
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.Aec.PropertyData.DatabaseServices;
 
-[assembly: CommandClass(typeof(Civil3D_plugins.TestMafCommands))]
+[assembly: CommandClass(typeof(Civil3D_plugins.HatchCoveragePlugin))]
 
 namespace Civil3D_plugins
 {
-    // Класс-модель для хранения данных одной строки из Excel
-    public class ExcelMafRow
+    // Класс-модель для хранения данных структуры пирога покрытия из Excel
+    public class ExcelCoverageRow
     {
-        public string Id { get; set; }
-        public string Manufacturer { get; set; }
+        public string CoverageId { get; set; }
+        public string CodeClassifier { get; set; }
+        public string CodeMaterial { get; set; }
+        public string PositionType { get; set; }
+        public string Area { get; set; }
+        public string Designation { get; set; }
         public string Name { get; set; }
-        public string Dimensions { get; set; }
-        public string Note { get; set; }
         public string Type { get; set; }
-        public string Type2 { get; set; }
-        public string Weight { get; set; }
-        public string GroupId { get; set; }
-        public string Version { get; set; }
-        public string AdskName { get; set; }
-        public string AdskSetOfDrawings { get; set; }
-        public string AcerCodeCollision { get; set; }
-        public string KrtrsCodeByClassifier { get; set; }
-    }
+        public string PieLayers { get; set; }
+        public string Thickness { get; set; }
 
+        // Метод автоматического определения имени целевого набора характеристик
+        public string GetTargetPsdName()
+        {
+            string t = Type?.ToLower() ?? "";
+            string n = Name?.ToLower() ?? "";
+
+            if (t.Contains("мульча") || n.Contains("мульча") || t.Contains("сыпучее") || n.Contains("сыпучее") ||
+                t.Contains("цветники") || n.Contains("цветники") || t.Contains("настил") || n.Contains("настил") ||
+                t.Contains("терравей") || n.Contains("терравей") || t.Contains("щепа") || n.Contains("щепа"))
+                return "05_ДП_(иное)";
+
+            if (t.Contains("плитка")) return "05_ДП_(плитка)";
+            if (t.Contains("газон") || t.Contains("решетки") || t.Contains("озеленение")) return "05_ДП_(озеленение)";
+            if (t.Contains("резин")) return "05_ДП_(мягкие)";
+            if (n.Contains("асфальт")) return "05_ДП_(твердые)";
+
+            return "05_ДП_(иное)";
+        }
+    }
     public class ExcelDataReaderHelper
     {
-        public static Dictionary<string, ExcelMafRow> ReadExcelData(string filePath, Editor ed)
+        public static Dictionary<string, ExcelCoverageRow> ReadExcelData(string filePath, Editor ed)
         {
-            // Регистр-независимый словарь, где КЛЮЧОМ является ID (Артикул) элемента из Excel
-            var result = new Dictionary<string, ExcelMafRow>(StringComparer.OrdinalIgnoreCase);
+            var result = new Dictionary<string, ExcelCoverageRow>(StringComparer.OrdinalIgnoreCase);
             try
             {
                 using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = ExcelDataReader.ExcelReaderFactory.CreateReader(stream))
                 {
-                    using (var reader = ExcelDataReader.ExcelReaderFactory.CreateReader(stream))
+                    if (!reader.Read()) return null;
+                    int idCol = -1, codeClCol = -1, codeMatCol = -1, posCol = -1, areaCol = -1;
+                    int desCol = -1, nameCol = -1, typeCol = -1, pieCol = -1, thickCol = -1;
+
+                    for (int col = 0; col < reader.FieldCount; col++)
                     {
-                        if (!reader.Read()) return null;
+                        string h = reader.GetValue(col)?.ToString()?.Trim()?.ToLower() ?? "";
+                        h = h.Replace("\r", "").Replace("\n", "");
 
-                        int idCol = -1, manCol = -1, nameCol = -1, dimCol = -1, noteCol = -1;
-                        int typeCol = -1, type2Col = -1, weightCol = -1, groupIdCol = -1, versionCol = -1;
-                        int adskNameCol = -1, adskSetCol = -1, acerCol = -1, krtrsCol = -1;
+                        if (h.Contains("покрыт") && (h.Contains("назван") || h.Contains("имя"))) idCol = col;
+                        else if (h.Contains("классиф") && h.Contains("здан")) codeClCol = col;
+                        else if (h.Contains("классиф") && h.Contains("матер")) codeMatCol = col;
+                        else if (h.Contains("позиц") || h.Contains("тип")) { if (posCol == -1) posCol = col; }
+                        else if (h.Contains("площад")) areaCol = col;
+                        else if (h.Contains("обознач")) desCol = col;
+                        else if (h.Contains("наименов")) nameCol = col;
+                        else if (h.Contains("тип") && h.Contains("покрыт")) typeCol = col;
+                        else if (h.Contains("пирог")) pieCol = col;
+                        else if (h.Contains("толщин")) thickCol = col;
+                    }
 
-                        for (int col = 0; col < reader.FieldCount; col++)
+                    if (idCol == -1) idCol = 0;
+                    if (codeClCol == -1) codeClCol = 1;
+                    if (codeMatCol == -1) codeMatCol = 2;
+                    if (posCol == -1) posCol = 3;
+                    if (areaCol == -1) areaCol = 4;
+                    if (desCol == -1) desCol = 5;
+                    if (nameCol == -1) nameCol = 6;
+                    if (typeCol == -1) typeCol = 7;
+                    if (pieCol == -1) pieCol = 8;
+                    if (thickCol == -1) thickCol = 9;
+
+                    reader.Read();
+
+                    while (reader.Read())
+                    {
+                        string id = reader.GetValue(idCol)?.ToString()?.Trim() ?? "";
+                        if (string.IsNullOrEmpty(id) || id.Contains("Пример") || id.Contains("Название")) continue;
+
+                        var row = new ExcelCoverageRow
                         {
-                            string headerText = reader.GetValue(col)?.ToString()?.Trim()?.ToLower() ?? string.Empty;
-
-                            if (headerText == "id") idCol = col;
-                            else if (headerText == "manufacturer") manCol = col;
-                            else if (headerText == "name") nameCol = col;
-                            else if (headerText == "dimensions") dimCol = col;
-                            else if (headerText == "note") noteCol = col;
-                            else if (headerText == "type") typeCol = col;
-                            else if (headerText == "type2") type2Col = col;
-                            else if (headerText == "weight") weightCol = col;
-                            else if (headerText == "group_id") groupIdCol = col;
-                            else if (headerText == "version") versionCol = col;
-                            else if (headerText == "adsk_name") adskNameCol = col;
-                            else if (headerText == "adsk_set_of_drawings") adskSetCol = col;
-                            else if (headerText == "acer_codecollision") acerCol = col;
-                            else if (headerText == "krtrs_code_by_classifier") krtrsCol = col;
-                        }
-
-                        if (idCol == -1)
-                        {
-                            ed.WriteMessage("\n[Ошибка Excel] В первой строчке таблицы не найден обязательный латинский заголовок 'id'!");
-                            return null;
-                        }
-
-                        while (reader.Read())
-                        {
-                            string rowId = reader.GetValue(idCol)?.ToString()?.Trim() ?? string.Empty;
-                            if (string.IsNullOrEmpty(rowId)) continue;
-
-                            var rowData = new ExcelMafRow
-                            {
-                                Id = rowId,
-                                Manufacturer = manCol != -1 ? reader.GetValue(manCol)?.ToString() ?? "" : "",
-                                Name = nameCol != -1 ? reader.GetValue(nameCol)?.ToString() ?? "" : "",
-                                Dimensions = dimCol != -1 ? reader.GetValue(dimCol)?.ToString() ?? "" : "",
-                                Note = noteCol != -1 ? reader.GetValue(noteCol)?.ToString() ?? "" : "",
-                                Type = typeCol != -1 ? reader.GetValue(typeCol)?.ToString() ?? "" : "",
-                                Type2 = type2Col != -1 ? reader.GetValue(type2Col)?.ToString() ?? "" : "",
-                                Weight = weightCol != -1 ? reader.GetValue(weightCol)?.ToString() ?? "" : "",
-                                GroupId = groupIdCol != -1 ? reader.GetValue(groupIdCol)?.ToString() ?? "" : "",
-                                Version = versionCol != -1 ? reader.GetValue(versionCol)?.ToString() ?? "" : "",
-                                AdskName = adskNameCol != -1 ? reader.GetValue(adskNameCol)?.ToString() ?? "" : "",
-                                AdskSetOfDrawings = adskSetCol != -1 ? reader.GetValue(adskSetCol)?.ToString() ?? "" : "",
-                                AcerCodeCollision = acerCol != -1 ? reader.GetValue(acerCol)?.ToString() ?? "" : "",
-                                KrtrsCodeByClassifier = krtrsCol != -1 ? reader.GetValue(krtrsCol)?.ToString() ?? "" : ""
-                            };
-
-                            if (!result.ContainsKey(rowId))
-                            {
-                                result.Add(rowId, rowData);
-                            }
-                        }
+                            CoverageId = id,
+                            CodeClassifier = codeClCol != -1 ? reader.GetValue(codeClCol)?.ToString() ?? "" : "",
+                            CodeMaterial = codeMatCol != -1 ? reader.GetValue(codeMatCol)?.ToString() ?? "" : "",
+                            PositionType = posCol != -1 ? reader.GetValue(posCol)?.ToString() ?? "" : "",
+                            Area = areaCol != -1 ? reader.GetValue(areaCol)?.ToString() ?? "" : "",
+                            Designation = desCol != -1 ? reader.GetValue(desCol)?.ToString() ?? "" : "",
+                            Name = nameCol != -1 ? reader.GetValue(nameCol)?.ToString() ?? "" : "",
+                            Type = typeCol != -1 ? reader.GetValue(typeCol)?.ToString() ?? "" : "",
+                            PieLayers = pieCol != -1 ? reader.GetValue(pieCol)?.ToString() ?? "" : "",
+                            Thickness = thickCol != -1 ? reader.GetValue(thickCol)?.ToString() ?? "" : ""
+                        };
+                        if (!result.ContainsKey(id)) result.Add(id, row);
                     }
                 }
             }
-            catch (System.Exception ex)
-            {
-                ed.WriteMessage($"\n>>> [Ошибка чтения Excel]: {ex.Message} <<<");
-                return null;
-            }
+            catch (System.Exception ex) { ed.WriteMessage($"\n[Ошибка Excel]: {ex.Message}"); return null; }
             return result;
         }
     }
-    public class TestMafCommands : IExtensionApplication
+    public class HatchCoveragePlugin : IExtensionApplication
     {
-        public const string PsdName = "07_МАФ";
+        private static readonly string[] AllPsdNames = { "05_ДП_(плитка)", "05_ДП_(озеленение)", "05_ДП_(мягкие)", "05_ДП_(твердые)", "05_ДП_(иное)" };
 
         public void Initialize()
         {
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
             var ed = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
-            if (ed != null)
-            {
-                ed.WriteMessage("\n>>> Плагин пакетного наполнения МАФ характеристиками успешно загружен! <<<");
-                ed.WriteMessage("\n>>> Используйте команду: MAF_FILL_PROPERTIES <<<");
-            }
+            if (ed != null) ed.WriteMessage("\n>>> Плагин штриховок ГП загружен! Команда: COVERAGE_FILL_PROPERTIES <<<");
         }
 
         public void Terminate() { }
 
-        [CommandMethod("MAF_FILL_PROPERTIES", CommandFlags.Modal)]
-        public void TestFillBatchFromFolder()
+        [CommandMethod("COVERAGE_FILL_PROPERTIES", CommandFlags.Modal)]
+        public void FillHatchPropertiesFromCurrentDoc()
         {
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
             Document activeDoc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (activeDoc == null) return;
             Editor ed = activeDoc.Editor;
+            Database db = activeDoc.Database;
 
-            // 1. ВЫБОР ОДНОГО ФАЙЛА EXCEL
-            string excelFilePath = string.Empty;
-            using (OpenFileDialog openFileDialog = new OpenFileDialog())
+            string excelFilePath = "";
+            using (OpenFileDialog ofd = new OpenFileDialog())
             {
-                openFileDialog.Filter = "Файлы Excel (*.xlsx)|*.xlsx|Все файлы (*.*)|*.*";
-                openFileDialog.Title = "Выберите ОДИН Excel-файл с общей ведомостью МАФ";
-                openFileDialog.Multiselect = false;
-                if (openFileDialog.ShowDialog() != DialogResult.OK)
-                {
-                    ed.WriteMessage("\n[Инфо] Выбор Excel-файла отменен.");
-                    return;
-                }
-                excelFilePath = openFileDialog.FileName;
+                ofd.Filter = "Excel (*.xlsx)|*.xlsx";
+                ofd.Title = "Выберите Excel-файл покрытий ГП";
+                if (ofd.ShowDialog() != DialogResult.OK) return;
+                excelFilePath = ofd.FileName;
             }
 
-            if (string.IsNullOrEmpty(excelFilePath) || !File.Exists(excelFilePath))
-            {
-                ed.WriteMessage("\n[Ошибка] Файл Excel не найден.");
-                return;
-            }
-
-            // 2. ВЫБОР ПАПКИ С ЧЕРТЕЖАМИ DWG
-            string folderPath = string.Empty;
-            using (FolderBrowserDialog folderBrowser = new FolderBrowserDialog())
-            {
-                folderBrowser.Description = "Выберите папку, содержащую чертежи DWG для обработки";
-                folderBrowser.ShowNewFolderButton = false;
-                if (folderBrowser.ShowDialog() != DialogResult.OK)
-                {
-                    ed.WriteMessage("\n[Инфо] Выбор папки отменен.");
-                    return;
-                }
-                folderPath = folderBrowser.SelectedPath;
-            }
-
-            if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath))
-            {
-                ed.WriteMessage("\n[Ошибка] Указанная папка не найдена.");
-                return;
-            }
-
-            string[] dwgFiles = Directory.GetFiles(folderPath, "*.dwg");
-            if (dwgFiles.Length == 0)
-            {
-                ed.WriteMessage("\n[Ошибка] В выбранной папке не найдены чертежи DWG.");
-                return;
-            }
-
-            // Читаем общие данные из Excel
             var excelData = ExcelDataReaderHelper.ReadExcelData(excelFilePath, ed);
-            if (excelData == null || excelData.Count == 0)
+            if (excelData == null || excelData.Count == 0) return;
+
+            string dwgDir = db.Filename != null && File.Exists(db.Filename) ? Path.GetDirectoryName(db.Filename) : Path.GetTempPath();
+            string logFilePath = Path.Combine(dwgDir, "Отработка_Покрытий_Лог.txt");
+            StringBuilder log = new StringBuilder($"=== ОТЧЕТ {DateTime.Now} ===\nФайл: {Path.GetFileName(db.Filename)}\n\n");
+
+            int processedCount = 0;
+            try
             {
-                ed.WriteMessage("\n[Ошибка] Не удалось прочитать данные из Excel или таблица пуста.");
-                return;
-            }
-
-            // ИНИЦИАЛИЗАЦИЯ ТЕКСТОВОГО ЛОГА В ВЫБРАННОЙ ПАПКЕ
-            string logFilePath = Path.Combine(folderPath, "Отработка_МАФ_Лог.txt");
-            StringBuilder logBuilder = new StringBuilder();
-            logBuilder.AppendLine($"=== ОТЧЕТ ОБРАБОТКИ БЛОКОВ МАФ от {DateTime.Now} ===");
-            logBuilder.AppendLine($"Файл Excel: {excelFilePath}");
-            logBuilder.AppendLine($"Обрабатываемая папка: {folderPath}");
-            logBuilder.AppendLine(new string('-', 80));
-
-            Database currentDb = HostApplicationServices.WorkingDatabase;
-            int totalUpdatedDrawings = 0;
-
-            // 3. ПАКЕТНАЯ ОБРАБОТКА КАЖДОГО DWG ФАЙЛА В ПАПКЕ
-            foreach (string dwgFilePath in dwgFiles)
-            {
-                string currentFileName = Path.GetFileName(dwgFilePath);
-                ed.WriteMessage($"\n\n[Процесс] Обработка файла: {currentFileName}...");
-                logBuilder.AppendLine($"\nФАЙЛ: {currentFileName}");
-
-                using (Database db = new Database(false, true))
+                using (DocumentLock docLock = activeDoc.LockDocument())
+                using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    try
+                    var psdDict = new DictionaryPropertySetDefinitions(db);
+                    var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                    foreach (ObjectId objId in ms)
                     {
-                        db.ReadDwgFile(dwgFilePath, FileOpenMode.OpenForReadAndAllShare, false, null);
-                        HostApplicationServices.WorkingDatabase = db;
-                        int processedCount = 0;
-                        ObjectId psdId = ObjectId.Null;
-
-                        using (var tr = db.TransactionManager.StartTransaction())
+                        if (objId.ObjectClass.Name == "AcDbHatch")
                         {
-                            var psdDict = new DictionaryPropertySetDefinitions(db);
-                            if (!psdDict.Has(PsdName, tr))
-                            {
-                                string noPsdMsg = $"  [ПРОПУЩЕН] Набор характеристик '{PsdName}' не найден в этом чертеже.";
-                                ed.WriteMessage($"\n{noPsdMsg}");
-                                logBuilder.AppendLine(noPsdMsg);
-                                tr.Commit();
-                                continue;
-                            }
-                            psdId = psdDict.GetAt(PsdName);
+                            var hatch = (Hatch)tr.GetObject(objId, OpenMode.ForWrite);
+                            if (hatch == null) continue;
 
-                            var blockTable = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                            var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-                            foreach (ObjectId objId in modelSpace)
+                            string layerName = hatch.Layer.Trim();
+                            if (excelData.TryGetValue(layerName, out ExcelCoverageRow excelRow))
                             {
-                                if (objId.ObjectClass.Name == "AcDbBlockReference")
+                                string targetPsdName = excelRow.GetTargetPsdName();
+                                if (!psdDict.Has(targetPsdName, tr)) continue;
+
+                                ObjectId targetPsdId = psdDict.GetAt(targetPsdName);
+
+                                // Очистка старых конфликтующих НХ из группы 05_ДП_
+                                ObjectIdCollection currentSets = PropertyDataServices.GetPropertySets(hatch);
+                                foreach (ObjectId id in currentSets)
                                 {
-                                    var blockRef = (BlockReference)tr.GetObject(objId, OpenMode.ForWrite);
-                                    if (blockRef == null) continue;
-
-                                    // Получаем настоящее имя главного блока в пространстве модели 
-                                    // (с защитой от анонимных/динамических имен вроде *U...)
-                                    string blockName = blockRef.IsDynamicBlock
-                                        ? ((BlockTableRecord)tr.GetObject(blockRef.DynamicBlockTableRecord, OpenMode.ForRead)).Name
-                                        : blockRef.Name;
-
-                                    ExcelMafRow excelRow = null;
-                                    string matchedArticul = string.Empty;
-
-                                    // УНИВЕРСАЛЬНАЯ ПРОВЕРКА: Ищем вхождение артикула из Excel в оригинальном имени блока
-                                    foreach (var pair in excelData)
+                                    var testPs = (PropertySet)tr.GetObject(id, OpenMode.ForRead);
+                                    if (testPs != null)
                                     {
-                                        // pair.Key — это артикул из Excel (цифры, латиница или составной с дефисами)
-                                        // Проверяем, содержится ли он целиком внутри имени блока (с игнорированием регистра букв)
-                                        if (blockName.IndexOf(pair.Key, StringComparison.OrdinalIgnoreCase) >= 0)
+                                        foreach (string psdName in AllPsdNames)
                                         {
-                                            excelRow = pair.Value;
-                                            matchedArticul = pair.Key;
-                                            break; // Совпадение найдено, прекращаем поиск для этого блока
-                                        }
-                                    }
-
-                                    // Если артикул успешно сопоставлен со строкой из Excel
-                                    if (excelRow != null)
-                                    {
-                                        ObjectId psId = ObjectId.Null;
-                                        ObjectIdCollection currentPropertySets = PropertyDataServices.GetPropertySets(blockRef);
-                                        foreach (ObjectId id in currentPropertySets)
-                                        {
-                                            var testPs = (PropertySet)tr.GetObject(id, OpenMode.ForRead);
-                                            if (testPs != null && testPs.PropertySetDefinition == psdId)
+                                            if (psdDict.Has(psdName, tr) && psdDict.GetAt(psdName) == testPs.PropertySetDefinition)
                                             {
-                                                psId = id;
+                                                if (psdName != targetPsdName) PropertyDataServices.RemovePropertySet(hatch, psdDict.GetAt(psdName));
                                                 break;
                                             }
                                         }
-
-                                        if (psId.IsNull)
-                                        {
-                                            PropertyDataServices.AddPropertySet(blockRef, psdId);
-                                            ObjectIdCollection updatedPropertySets = PropertyDataServices.GetPropertySets(blockRef);
-                                            foreach (ObjectId id in updatedPropertySets)
-                                            {
-                                                var testPs = (PropertySet)tr.GetObject(id, OpenMode.ForRead);
-                                                if (testPs != null && testPs.PropertySetDefinition == psdId)
-                                                {
-                                                    psId = id;
-                                                    break;
-                                                }
-                                            }
-                                        }
-
-                                        if (!psId.IsNull)
-                                        {
-                                            var ps = (PropertySet)tr.GetObject(psId, OpenMode.ForWrite);
-                                            if (ps != null)
-                                            {
-                                                bool hasPropertyErrors = false;
-
-                                                // Наполняем характеристики и собираем лог внутренних ошибок записи полей
-                                                hasPropertyErrors |= !SetProperty(ps, "id", excelRow.Id, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "manufacturer", excelRow.Manufacturer, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "name", excelRow.Name, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "dimensions", excelRow.Dimensions, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "note", excelRow.Note, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "guid", blockName, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "type", excelRow.Type, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "type2", excelRow.Type2, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "weight", excelRow.Weight, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "group_id", excelRow.GroupId, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "Version", excelRow.Version, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "ADSK_Name", excelRow.AdskName, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "ADSK_Set_of_drawings", excelRow.AdskSetOfDrawings, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "ACER_CodeCollision", excelRow.AcerCodeCollision, logBuilder);
-                                                hasPropertyErrors |= !SetProperty(ps, "KRTRS_Code_by_classifier", excelRow.KrtrsCodeByClassifier, logBuilder);
-
-                                                if (!hasPropertyErrors)
-                                                {
-                                                    logBuilder.AppendLine($"  [УСПЕХ] Блок '{blockName}' успешно связан с артикулом '{matchedArticul}'");
-                                                }
-                                                else
-                                                {
-                                                    logBuilder.AppendLine($"  [ВНИМАНИЕ] Блок '{blockName}' (Артикул '{matchedArticul}') записан с частичными ошибками полей (см. ошибки свойств выше).");
-                                                }
-
-                                                processedCount++;
-                                            }
-                                        }
                                     }
-                                    else
+                                }
+
+                                // Поиск или добавление целевого НХ
+                                ObjectId psId = ObjectId.Null;
+                                currentSets = PropertyDataServices.GetPropertySets(hatch);
+                                foreach (ObjectId id in currentSets)
+                                {
+                                    var testPs = (PropertySet)tr.GetObject(id, OpenMode.ForRead);
+                                    if (testPs != null && testPs.PropertySetDefinition == targetPsdId) { psId = id; break; }
+                                }
+
+                                if (psId.IsNull)
+                                {
+                                    PropertyDataServices.AddPropertySet(hatch, targetPsdId);
+                                    foreach (ObjectId id in PropertyDataServices.GetPropertySets(hatch))
                                     {
-                                        // КОСЯК: Блок верхнего уровня есть, но его имя не содержит ни один артикул из текущего Excel
-                                        logBuilder.AppendLine($"  [НЕ НАЙДЕН АРТИКУЛ] Блок с именем '{blockName}' пропущен. Ни один ID из Excel не содержится в этом имени.");
+                                        var testPs = (PropertySet)tr.GetObject(id, OpenMode.ForRead);
+                                        if (testPs != null && testPs.PropertySetDefinition == targetPsdId) { psId = id; break; }
+                                    }
+                                }
+
+                                // Запись данных в свойства
+                                if (!psId.IsNull)
+                                {
+                                    var ps = (PropertySet)tr.GetObject(psId, OpenMode.ForWrite);
+                                    if (ps != null)
+                                    {
+                                        // Записываем ID покрытия (строку "ГП_260_Покрытие...") в свойство "Название_покрытия"
+                                        SetProperty(ps, "Название_покрытия", excelRow.CoverageId);
+
+                                        SetProperty(ps, "Код_по_классификатору_зданий", excelRow.CodeClassifier);
+                                        SetProperty(ps, "Код_по_классификатору_материалов", excelRow.CodeMaterial);
+                                        SetProperty(ps, "Позиция_Тип", excelRow.PositionType);
+                                        SetProperty(ps, "Обозначение", excelRow.Designation);
+                                        SetProperty(ps, "Наименование", excelRow.Name);
+                                        SetProperty(ps, "Пирог_покрытия_со_слоями", excelRow.PieLayers);
+                                        SetProperty(ps, "Толщина_покрытия", excelRow.Thickness);
+
+                                        // Запись типа покрытия (Плитка, асфальт и т.д.)
+                                        if (!SetProperty(ps, "Тип_покрытия", excelRow.Type))
+                                        {
+                                            SetProperty(ps, "Тип", excelRow.Type);
+                                        }
+
+                                        processedCount++;
                                     }
                                 }
                             }
-                            tr.Commit();
                         }
-
-                        // Сохранение фоновой базы данных чертежа поверх исходного файла
-                        db.SaveAs(dwgFilePath, false, DwgVersion.Current, db.SecurityParameters);
-                        ed.WriteMessage($"\n[Успех] Файл {currentFileName} обработан. Найдено и заполнено блоков: {processedCount}.");
-                        totalUpdatedDrawings++;
                     }
-                    catch (System.Exception ex)
-                    {
-                        string critError = $"  [КРИТИЧЕСКАЯ ОШИБКА ФАЙЛА] Сбой при обработке файла: {ex.Message}";
-                        ed.WriteMessage($"\n{critError}");
-                        logBuilder.AppendLine(critError);
-                    }
-                    finally
-                    {
-                        HostApplicationServices.WorkingDatabase = currentDb;
-                    }
+                    tr.Commit();
                 }
+                ed.WriteMessage($"\n[Успех] Готово! Наполнено штриховок: {processedCount}.");
+                log.AppendLine($"[УСПЕХ] Обработано штриховок: {processedCount}");
             }
+            catch (System.Exception ex) { ed.WriteMessage($"\n[Ошибка]: {ex.Message}"); log.AppendLine($"[СБОЙ]: {ex.Message}"); }
 
-            // СОХРАНЕНИЕ ТЕКСТОВОГО ЛОГА НА ДИСК
-            try
-            {
-                logBuilder.AppendLine("\n" + new string('-', 80));
-                logBuilder.AppendLine($"Пакетная обработка завершена. Успешно обновлено файлов: {totalUpdatedDrawings} из {dwgFiles.Length}");
-                File.WriteAllText(logFilePath, logBuilder.ToString(), Encoding.UTF8);
-                ed.WriteMessage($"\n\n>>> Пакетная обработка завершена! Создан подробный лог-файл: {logFilePath} <<<");
-            }
-            catch (System.Exception ex)
-            {
-                ed.WriteMessage($"\n[Ошибка записи лога] Не удалось сохранить файл отчета: {ex.Message}");
-            }
-
+            try { File.WriteAllText(logFilePath, log.ToString(), Encoding.UTF8); } catch { }
             ed.UpdateScreen();
         }
 
-        private bool SetProperty(PropertySet ps, string propName, object value, StringBuilder logBuilder)
+        private bool SetProperty(PropertySet ps, string propName, object value)
         {
             try
             {
-                int propId = ps.PropertyNameToId(propName);
-                string strValue = value?.ToString() ?? string.Empty;
-                ps.SetAt(propId, strValue);
+                int id = ps.PropertyNameToId(propName);
+                ps.SetAt(id, value?.ToString() ?? "");
                 return true;
             }
-            catch (System.Exception ex)
-            {
-                // Фиксируем в логе несовпадение имен полей или типов данных в диспетчере стилей
-                logBuilder.AppendLine($"    └─ [ОШИБКА СВОЙСТВА] Не удалось записать значение в поле '{propName}'. Причина: {ex.Message}");
-                return false;
-            }
-        } // Закрывает метод SetProperty
-    } // Закрывает класс TestMafCommands
-} // Закрывает namespace Civil3D_plugins
+            catch { return false; }
+        }
+    }
+}
