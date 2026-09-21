@@ -27,21 +27,25 @@ namespace Civil3D_plugins
         public string PieLayers { get; set; }
         public string Thickness { get; set; }
 
-        // Метод автоматического определения имени целевого набора характеристик
+        // Метод автоматического определения имени целевого набора характеристик с правильными приоритетами
         public string GetTargetPsdName()
         {
             string t = Type?.ToLower() ?? "";
             string n = Name?.ToLower() ?? "";
 
+            // 1. Проверяем жесткие типы покрытий в первую очередь (фикс ложного срабатывания асфальта)
+            if (t.Contains("плитка")) return "05_ДП_(плитка)";
+            if (n.Contains("асфальт") || t.Contains("асфальт")) return "05_ДП_(твердые)";
+            if (t.Contains("газон") || t.Contains("решетки") || t.Contains("озеленение")) return "05_ДП_(озеленение)";
+            if (t.Contains("резин")) return "05_ДП_(мягкие)";
+
+            // 2. И только если не подошли главные типы — проверяем категорию "Иное"
             if (t.Contains("мульча") || n.Contains("мульча") || t.Contains("сыпучее") || n.Contains("сыпучее") ||
                 t.Contains("цветники") || n.Contains("цветники") || t.Contains("настил") || n.Contains("настил") ||
                 t.Contains("терравей") || n.Contains("терравей") || t.Contains("щепа") || n.Contains("щепа"))
+            {
                 return "05_ДП_(иное)";
-
-            if (t.Contains("плитка")) return "05_ДП_(плитка)";
-            if (t.Contains("газон") || t.Contains("решетки") || t.Contains("озеленение")) return "05_ДП_(озеленение)";
-            if (t.Contains("резин")) return "05_ДП_(мягкие)";
-            if (n.Contains("асфальт")) return "05_ДП_(твердые)";
+            }
 
             return "05_ДП_(иное)";
         }
@@ -178,52 +182,32 @@ namespace Civil3D_plugins
 
                                 ObjectId targetPsdId = psdDict.GetAt(targetPsdName);
 
-                                // Очистка старых конфликтующих НХ из группы 05_ДП_
-                                ObjectIdCollection currentSets = PropertyDataServices.GetPropertySets(hatch);
-                                foreach (ObjectId id in currentSets)
+                                // Полная зачистка старых наборов из нашей группы перед записью нового
+                                foreach (string psdName in AllPsdNames)
                                 {
-                                    var testPs = (PropertySet)tr.GetObject(id, OpenMode.ForRead);
-                                    if (testPs != null)
+                                    if (psdDict.Has(psdName, tr))
                                     {
-                                        foreach (string psdName in AllPsdNames)
-                                        {
-                                            if (psdDict.Has(psdName, tr) && psdDict.GetAt(psdName) == testPs.PropertySetDefinition)
-                                            {
-                                                if (psdName != targetPsdName) PropertyDataServices.RemovePropertySet(hatch, psdDict.GetAt(psdName));
-                                                break;
-                                            }
-                                        }
+                                        try { PropertyDataServices.RemovePropertySet(hatch, psdDict.GetAt(psdName)); } catch { }
                                     }
                                 }
 
-                                // Поиск или добавление целевого НХ
+                                // Добавление актуального НХ на чистый объект
+                                PropertyDataServices.AddPropertySet(hatch, targetPsdId);
+
                                 ObjectId psId = ObjectId.Null;
-                                currentSets = PropertyDataServices.GetPropertySets(hatch);
-                                foreach (ObjectId id in currentSets)
+                                foreach (ObjectId id in PropertyDataServices.GetPropertySets(hatch))
                                 {
                                     var testPs = (PropertySet)tr.GetObject(id, OpenMode.ForRead);
                                     if (testPs != null && testPs.PropertySetDefinition == targetPsdId) { psId = id; break; }
                                 }
 
-                                if (psId.IsNull)
-                                {
-                                    PropertyDataServices.AddPropertySet(hatch, targetPsdId);
-                                    foreach (ObjectId id in PropertyDataServices.GetPropertySets(hatch))
-                                    {
-                                        var testPs = (PropertySet)tr.GetObject(id, OpenMode.ForRead);
-                                        if (testPs != null && testPs.PropertySetDefinition == targetPsdId) { psId = id; break; }
-                                    }
-                                }
-
-                                // Запись данных в свойства
+                                // Заполнение полей свойствами из таблицы Excel
                                 if (!psId.IsNull)
                                 {
                                     var ps = (PropertySet)tr.GetObject(psId, OpenMode.ForWrite);
                                     if (ps != null)
                                     {
-                                        // Записываем ID покрытия (строку "ГП_260_Покрытие...") в свойство "Название_покрытия"
                                         SetProperty(ps, "Название_покрытия", excelRow.CoverageId);
-
                                         SetProperty(ps, "Код_по_классификатору_зданий", excelRow.CodeClassifier);
                                         SetProperty(ps, "Код_по_классификатору_материалов", excelRow.CodeMaterial);
                                         SetProperty(ps, "Позиция_Тип", excelRow.PositionType);
@@ -232,12 +216,13 @@ namespace Civil3D_plugins
                                         SetProperty(ps, "Пирог_покрытия_со_слоями", excelRow.PieLayers);
                                         SetProperty(ps, "Толщина_покрытия", excelRow.Thickness);
 
-                                        // Запись типа покрытия (Плитка, асфальт и т.д.)
                                         if (!SetProperty(ps, "Тип_покрытия", excelRow.Type))
                                         {
                                             SetProperty(ps, "Тип", excelRow.Type);
                                         }
 
+                                        // ИСПРАВЛЕНО: Передаем обязательный флаг true в метод обновления графики штриховки
+                                        hatch.RecordGraphicsModified(true);
                                         processedCount++;
                                     }
                                 }
