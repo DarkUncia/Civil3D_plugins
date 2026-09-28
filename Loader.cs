@@ -4,11 +4,14 @@ using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.ApplicationServices;
 
 [assembly: ExtensionApplication(typeof(Civil3D_plugins.Loader))]
+
+// Ваши существующие рабочие команды
 [assembly: CommandClass(typeof(Civil3D_plugins.CoordinateExporter))]
 [assembly: CommandClass(typeof(Civil3D_plugins.C3D_ExportClasses))]
 [assembly: CommandClass(typeof(Civil3D_plugins.CogoFromGeometryCommands))]
-// Добавили регистрацию нашей команды генерации библиотек МАФ
-[assembly: CommandClass(typeof(MafLibraryGenerator))]
+
+// Новая изолированная команда заполнения НХ
+[assembly: CommandClass(typeof(Civil3D_plugins.MafOnlyPropertyFiller))]
 
 namespace Civil3D_plugins
 {
@@ -27,6 +30,7 @@ namespace Civil3D_plugins
             if (doc != null)
             {
                 doc.Editor.WriteMessage("\n>>> Плагин Civil3D_plugins успешно загружен! <<<");
+                doc.Editor.WriteMessage("\n>>> Используйте команду: MAF_FILL_ATTRIBUTES <<<");
             }
         }
 
