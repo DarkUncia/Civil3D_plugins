@@ -6,8 +6,9 @@ using Autodesk.AutoCAD.ApplicationServices;
 [assembly: ExtensionApplication(typeof(Civil3D_plugins.Loader))]
 [assembly: CommandClass(typeof(Civil3D_plugins.CoordinateExporter))]
 [assembly: CommandClass(typeof(Civil3D_plugins.C3D_ExportClasses))]
-// Теперь здесь четкое, понятное и уникальное имя класса
 [assembly: CommandClass(typeof(Civil3D_plugins.CogoFromGeometryCommands))]
+// Добавили регистрацию нашей команды генерации библиотек МАФ
+[assembly: CommandClass(typeof(MafLibraryGenerator))]
 
 namespace Civil3D_plugins
 {
@@ -17,10 +18,7 @@ namespace Civil3D_plugins
         {
             try
             {
-                // Регистрируем кодировки для корректной работы с файлами
                 System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
-
-                // Добавляем автоматический поиск зависимых DLL в папке плагина
                 AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
             }
             catch { }
@@ -34,7 +32,6 @@ namespace Civil3D_plugins
 
         public void Terminate() { }
 
-        // Событие, которое принудительно находит ClosedXML.Parser.dll рядом с основным плагином
         private System.Reflection.Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
         {
             try
