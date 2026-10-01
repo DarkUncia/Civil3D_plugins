@@ -15,6 +15,10 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+	  <None Include=".github\agents\deepseek.agent.md" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<Reference Include="accoremgd">
 			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\accoremgd.dll</HintPath>
 			<Private>False</Private>
