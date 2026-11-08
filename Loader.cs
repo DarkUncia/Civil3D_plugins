@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.ApplicationServices;

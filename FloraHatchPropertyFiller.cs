@@ -11,14 +11,14 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.Aec.PropertyData.DatabaseServices;
 using Autodesk.AutoCAD.Colors;
 
-[assembly: CommandClass(typeof(Civil3D_plugins.FloraHatchPropertyFiller))]
-namespace Civil3D_plugins
+[assembly: CommandClass(typeof(Civil3D_FloraPlugin.FloraHatchPropertyFiller))]
+namespace Civil3D_FloraPlugin
 {
-    // 1. Модель строки Excel для штриховок озеленения FloraBIM
+    // Модель строки
     public class FloraBIM_HatchRow
     {
-        public string ColorRGB { get; set; } = string.Empty;       // Оригинальный "color" (для поиска)
-        public string ColorAgo { get; set; } = string.Empty;       // Специальный "color_AGO"
+        public string ColorRGB { get; set; } = string.Empty;
+        public string ColorAgo { get; set; } = string.Empty;
         public string Id { get; set; } = string.Empty;
         public string CodeClassifierBuilding { get; set; } = string.Empty;
         public string CodeClassifierElement { get; set; } = string.Empty;
@@ -34,24 +34,18 @@ namespace Civil3D_plugins
         public string ParamXl { get; set; } = string.Empty;
         public string HatchPattern { get; set; } = string.Empty;
     }
-    // 2. Умный бинарный парсер Excel с раздельным сбором оригинального цвета и цвета по АГО
+
+    // Парсер
     public static class FloraHatchExcelReader
     {
-        // Метод нормализации RGB строки в строгий формат "R,G,B" без пробелов
         public static string NormalizeRgbString(string rawColor)
         {
             if (string.IsNullOrEmpty(rawColor)) return string.Empty;
             string clean = rawColor.Replace(" ", "").Trim();
-
             if (!clean.Contains(",") && clean.Length >= 7 && clean.Length <= 9)
             {
-                try
-                {
-                    return $"{int.Parse(clean.Substring(0, 3))},{int.Parse(clean.Substring(3, 3))},{int.Parse(clean.Substring(6))}";
-                }
-                catch { }
+                try { return $"{int.Parse(clean.Substring(0, 3))},{int.Parse(clean.Substring(3, 3))},{int.Parse(clean.Substring(6))}"; } catch { }
             }
-
             string[] parts = clean.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length == 3 && int.TryParse(parts[0], out int r) && int.TryParse(parts[1], out int g) && int.TryParse(parts[2], out int b))
             {
@@ -72,24 +66,15 @@ namespace Civil3D_plugins
                     int sheetIndex = 0;
                     do
                     {
-                        ed.WriteMessage($"\n[Excel] Сканирую лист №{sheetIndex + 1}: {reader.Name}");
-
                         int colorCol = -1, colorAgoCol = -1, idCol = -1, classBldCol = -1, classElCol = -1, nameCol = -1, typeCol = -1, statusCol = -1, hatchCol = -1;
                         int xxxsCol = -1, xxsCol = -1, xsCol = -1, sCol = -1, mCol = -1, lCol = -1, xlCol = -1;
-
                         int localRowCount = 0;
 
                         while (reader.Read())
                         {
                             localRowCount++;
+                            if (localRowCount == 2) continue; // Пропуск примера
 
-                            // ЖЕСТКАЯ БЛОКИРОВКА ВТОРОЙ СТРОКИ: Полностью пропускаем её, это примеры для человека!
-                            if (localRowCount == 2)
-                            {
-                                continue;
-                            }
-
-                            // Если это первая строка (строка заголовков), считываем индексы колонок
                             if (localRowCount == 1)
                             {
                                 for (int col = 0; col < reader.FieldCount; col++)
@@ -97,10 +82,8 @@ namespace Civil3D_plugins
                                     string header = reader.GetValue(col)?.ToString()?.Trim()?.ToLower() ?? "";
                                     header = header.Replace("\r", "").Replace("\n", "");
 
-                                    // РАЗДЕЛЬНЫЙ ПОИСК КОЛОНОК ЦВЕТА
                                     if (header == "color_ago" || header == "цвет_аго") colorAgoCol = col;
                                     else if (header == "color" || header == "цвет") colorCol = col;
-
                                     else if (header.Contains("id") || header.Contains("артикул")) idCol = col;
                                     else if (header.Contains("классиф") && header.Contains("здан")) classBldCol = col;
                                     else if (header.Contains("классиф") && header.Contains("элемен")) classElCol = col;
@@ -119,7 +102,6 @@ namespace Civil3D_plugins
                                 continue;
                             }
 
-                            // Поиск по ключевому цвету
                             int actualColorCol = colorCol != -1 ? colorCol : 13;
                             object rawValue = reader.GetValue(actualColorCol);
                             if (rawValue == null) continue;
@@ -130,14 +112,13 @@ namespace Civil3D_plugins
                             string normalizedKey = NormalizeRgbString(rawColor);
                             if (string.IsNullOrEmpty(normalizedKey)) continue;
 
-                            // Сбор значения color_AGO из его личной колонки (или дефолт 14 столбец, если не нашли имя)
                             int actualAgoCol = colorAgoCol != -1 ? colorAgoCol : 14;
                             string rawAgoValue = reader.GetValue(actualAgoCol)?.ToString()?.Trim() ?? string.Empty;
 
                             var row = new FloraBIM_HatchRow
                             {
                                 ColorRGB = normalizedKey,
-                                ColorAgo = NormalizeRgbString(rawAgoValue), // Корректно сохраняем раздельный цвет АГО
+                                ColorAgo = NormalizeRgbString(rawAgoValue),
                                 Id = idCol != -1 ? reader.GetValue(idCol)?.ToString()?.Trim() ?? "" : "",
                                 CodeClassifierBuilding = classBldCol != -1 ? reader.GetValue(classBldCol)?.ToString()?.Trim() ?? "" : "",
                                 CodeClassifierElement = classElCol != -1 ? reader.GetValue(classElCol)?.ToString()?.Trim() ?? "" : "",
@@ -163,11 +144,12 @@ namespace Civil3D_plugins
                     } while (reader.NextResult());
                 }
             }
-            catch (System.Exception ex) { ed.WriteMessage($"\n[Ошибка FloraHatch Excel]: {ex.Message}"); }
+            catch (System.Exception ex) { ed.WriteMessage($"\n[Ошибка Excel]: {ex.Message}"); }
             return registry;
         }
     }
-    // 3. Главный исполняемый класс для синхронизации штриховок (Изгороди, Цветники, Злаки, Миксы)
+
+    // Основной класс для 3D и Штриховок
     public class FloraHatchPropertyFiller : IExtensionApplication
     {
         public const string TargetPsdName = "02_Живая изгородь. Многолетние цветы. Злаки. Миксы";
@@ -175,7 +157,7 @@ namespace Civil3D_plugins
         public void Initialize()
         {
             var ed = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
-            if (ed != null) ed.WriteMessage($"\n>>> Модуль FloraHatchPropertyFiller загружен! Команда: FLORA_HATCH_FILL_PROPERTIES <<<");
+            if (ed != null) ed.WriteMessage($"\n>>> Модуль Площадных объектов (3D/Штриховки) загружен! Команда: FLORA_HATCH_FILL_PROPERTIES <<<");
         }
 
         public void Terminate() { }
@@ -188,7 +170,7 @@ namespace Civil3D_plugins
             Editor ed = activeDoc.Editor; Database db = activeDoc.Database;
 
             string targetPath = string.Empty;
-            using (OpenFileDialog dialog = new OpenFileDialog { Filter = "Книга Excel (*.xlsx)|*.xlsx", Title = "Выберите БД штриховок" })
+            using (OpenFileDialog dialog = new OpenFileDialog { Filter = "Книга Excel (*.xlsx)|*.xlsx", Title = "Выберите БД озеленения" })
             {
                 if (dialog.ShowDialog() != DialogResult.OK) return;
                 targetPath = dialog.FileName;
@@ -201,22 +183,9 @@ namespace Civil3D_plugins
                 return;
             }
 
-            ed.WriteMessage($"\n[УСПЕХ]: Всего оригинальных RGB-ключей 'color' загружено в память: {databaseMap.Count}");
-            ed.WriteMessage("\n--- ПЕРВЫЕ 10 КЛЮЧЕЙ В ПАМЯТИ ПЛАГИНА ---");
-            int debugCounter = 0;
-            foreach (var excelKey in databaseMap.Keys)
-            {
-                ed.WriteMessage($"\n  Ключ №{debugCounter + 1}: '{excelKey}' -> АГО: '{databaseMap[excelKey].ColorAgo}' | Куст: '{databaseMap[excelKey].Name}'");
-                debugCounter++;
-                if (debugCounter >= 10) break;
-            }
-            ed.WriteMessage("\n-----------------------------------------");
-
-            ed.WriteMessage("\nВыберите контуры штриховок (Hatch) на чертеже...");
-            PromptSelectionOptions selOpts = new PromptSelectionOptions();
-
-            TypedValue[] typedValueArray = new TypedValue[] { new TypedValue((int)DxfCode.Start, "HATCH") };
-            PromptSelectionResult selResult = ed.GetSelection(selOpts, new SelectionFilter(typedValueArray));
+            ed.WriteMessage($"\n[УСПЕХ]: Загружено ключей: {databaseMap.Count}");
+            ed.WriteMessage("\nВыберите 3D-тела, Поверхности или Штриховки на чертеже...");
+            PromptSelectionResult selResult = ed.GetSelection();
             if (selResult.Status != PromptStatus.OK || selResult.Value == null) return;
 
             int alteredObjectsCount = 0;
@@ -227,25 +196,26 @@ namespace Civil3D_plugins
                 if (!psdDictionary.Has(TargetPsdName, trans))
                 {
                     ed.WriteMessage($"\n[Критическая ошибка] Набор '{TargetPsdName}' отсутствует в текущем чертеже!");
-                    trans.Commit(); return;
+                    return;
                 }
                 ObjectId globalPsdId = psdDictionary.GetAt(TargetPsdName);
 
                 foreach (SelectedObject selected in selResult.Value)
                 {
                     if (selected == null) continue;
-                    var hatch = trans.GetObject(selected.ObjectId, OpenMode.ForWrite) as Hatch;
-                    if (hatch == null) continue;
+                    DBObject currentDbObj = trans.GetObject(selected.ObjectId, OpenMode.ForWrite);
 
-                    string rawColorStr = GetHatchColorString(hatch);
-                    string hatchColorKey = FloraHatchExcelReader.NormalizeRgbString(rawColorStr);
-                    ed.WriteMessage($"\n[Анализ штриховки {hatch.Handle}]: Цвет CAD = '{rawColorStr}' | Поиск = '{hatchColorKey}'");
+                    // Ищем только 3D-тела, Поверхности и Штриховки
+                    if (!(currentDbObj is Hatch || currentDbObj is Solid3d || currentDbObj is Autodesk.Civil.DatabaseServices.Surface)) continue;
 
-                    if (databaseMap.TryGetValue(hatchColorKey, out FloraBIM_HatchRow dataRow))
+                    string colorKey = GetObjectColorKey(currentDbObj, trans);
+                    ed.WriteMessage($"\n[Анализ {currentDbObj.GetType().Name} {currentDbObj.Handle}]: Цвет = '{colorKey}'");
+
+                    if (!string.IsNullOrEmpty(colorKey) && databaseMap.TryGetValue(colorKey, out FloraBIM_HatchRow dataRow))
                     {
                         ed.WriteMessage(" -> [Матч! Данные найдены в Excel]");
                         ObjectId activePsId = ObjectId.Null;
-                        foreach (ObjectId setInterfaceId in PropertyDataServices.GetPropertySets(hatch))
+                        foreach (ObjectId setInterfaceId in PropertyDataServices.GetPropertySets(currentDbObj))
                         {
                             var currentSet = (PropertySet)trans.GetObject(setInterfaceId, OpenMode.ForRead);
                             if (currentSet != null && currentSet.PropertySetDefinition == globalPsdId) { activePsId = setInterfaceId; break; }
@@ -253,8 +223,8 @@ namespace Civil3D_plugins
 
                         if (activePsId.IsNull)
                         {
-                            PropertyDataServices.AddPropertySet(hatch, globalPsdId);
-                            foreach (ObjectId setInterfaceId in PropertyDataServices.GetPropertySets(hatch))
+                            PropertyDataServices.AddPropertySet(currentDbObj, globalPsdId);
+                            foreach (ObjectId setInterfaceId in PropertyDataServices.GetPropertySets(currentDbObj))
                             {
                                 var currentSet = (PropertySet)trans.GetObject(setInterfaceId, OpenMode.ForRead);
                                 if (currentSet != null && currentSet.PropertySetDefinition == globalPsdId) { activePsId = setInterfaceId; break; }
@@ -268,10 +238,8 @@ namespace Civil3D_plugins
                             {
                                 var props = new List<KeyValuePair<string, string>>
                                 {
-                                    // РАЗДЕЛЬНЫЙ ИНЖЕКТ ЦВЕТОВ: Каждому свойству своё честное значение из таблицы!
                                     new KeyValuePair<string, string>("color", dataRow.ColorRGB),
                                     new KeyValuePair<string, string>("color_AGO", dataRow.ColorAgo),
-
                                     new KeyValuePair<string, string>("ID", dataRow.Id),
                                     new KeyValuePair<string, string>("Код по классификатору зданий", dataRow.CodeClassifierBuilding),
                                     new KeyValuePair<string, string>("Код по классификатору элементов", dataRow.CodeClassifierElement),
@@ -290,39 +258,51 @@ namespace Civil3D_plugins
 
                                 foreach (var p in props) InjectProperty(writeableSet, p.Key, p.Value);
 
-                                hatch.RecordGraphicsModified(true); alteredObjectsCount++;
+                                if (currentDbObj is Hatch h) h.RecordGraphicsModified(true);
+                                else if (currentDbObj is Solid3d s) s.RecordGraphicsModified(true);
+
+                                alteredObjectsCount++;
+                                ed.WriteMessage($" -> [УСПЕХ: Данные записаны!]");
                             }
                         }
                     }
-                    else ed.WriteMessage(" -> [Пропуск] В Excel нет строки с таким оригинальным цветом.");
+                    else ed.WriteMessage(" -> [Пропуск] В Excel нет строки с таким цветом.");
                 }
                 trans.Commit();
             }
-            ed.WriteMessage($"\n\n[Итог] Синхронизация завершена! Успешно заполнено штриховок: {alteredObjectsCount}");
+            ed.WriteMessage($"\n\n[Итог] Заполнение завершено! Обработано объектов: {alteredObjectsCount}");
             ed.UpdateScreen();
         }
 
-        private string GetHatchColorString(Hatch hatch)
+        private string GetObjectColorKey(DBObject obj, Transaction trans)
         {
-            if (hatch.Color.IsByLayer)
+            if (obj is Entity ent)
             {
-                using (var tr = hatch.Database.TransactionManager.StartTransaction())
+                if (ent is Autodesk.Civil.DatabaseServices.Surface surface)
                 {
-                    var lt = (LayerTable)tr.GetObject(hatch.Database.LayerTableId, OpenMode.ForRead);
-                    if (lt.Has(hatch.Layer))
+                    var col = ent.Color;
+                    if (col.ColorMethod == Autodesk.AutoCAD.Colors.ColorMethod.ByLayer || col.ColorIndex == 256)
                     {
-                        var layer = (LayerTableRecord)tr.GetObject(lt[hatch.Layer], OpenMode.ForRead);
-                        return GetColorName(layer.Color);
+                        var layer = (LayerTableRecord)trans.GetObject(surface.LayerId, OpenMode.ForRead);
+                        var layerColor = layer.Color;
+                        return FloraHatchExcelReader.NormalizeRgbString($"{layerColor.Red},{layerColor.Green},{layerColor.Blue}");
                     }
+                    return FloraHatchExcelReader.NormalizeRgbString($"{col.Red},{col.Green},{col.Blue}");
+                }
+
+                if (ent is Solid3d || ent is Hatch)
+                {
+                    var col = ent.Color;
+                    if (col.ColorMethod == Autodesk.AutoCAD.Colors.ColorMethod.ByLayer || col.ColorIndex == 256)
+                    {
+                        var layer = (LayerTableRecord)trans.GetObject(ent.LayerId, OpenMode.ForRead);
+                        var layerColor = layer.Color;
+                        return FloraHatchExcelReader.NormalizeRgbString($"{layerColor.Red},{layerColor.Green},{layerColor.Blue}");
+                    }
+                    return FloraHatchExcelReader.NormalizeRgbString($"{col.Red},{col.Green},{col.Blue}");
                 }
             }
-            return GetColorName(hatch.Color);
-        }
-
-        private string GetColorName(Autodesk.AutoCAD.Colors.Color acColor)
-        {
-            if (acColor.ColorMethod == ColorMethod.ByColor) return $"{acColor.Red},{acColor.Green},{acColor.Blue}";
-            return acColor.ColorIndex.ToString();
+            return null;
         }
 
         private void InjectProperty(PropertySet ps, string propName, string value)
@@ -330,7 +310,7 @@ namespace Civil3D_plugins
             try
             {
                 int internalId = ps.PropertyNameToId(propName);
-                ps.SetAt(internalId, value ?? string.Empty);
+                if (internalId >= 0) ps.SetAt(internalId, value ?? string.Empty);
             }
             catch { }
         }

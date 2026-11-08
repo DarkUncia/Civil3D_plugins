@@ -18,33 +18,6 @@
 	  <None Include=".github\agents\deepseek.agent.md" />
 	</ItemGroup>
 
-	<ItemGroup>
-		<Reference Include="accoremgd">
-			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\accoremgd.dll</HintPath>
-			<Private>False</Private>
-		</Reference>
-		<Reference Include="acdbmgd">
-			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\acdbmgd.dll</HintPath>
-			<Private>False</Private>
-		</Reference>
-		<Reference Include="acmgd">
-			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\acmgd.dll</HintPath>
-			<Private>False</Private>
-		</Reference>
-		<Reference Include="AecBaseMgd">
-			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\ACA\AecBaseMgd.dll</HintPath>
-			<Private>False</Private>
-		</Reference>
-		<Reference Include="AecPropDataMgd">
-			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\ACA\AecPropDataMgd.dll</HintPath>
-			<Private>False</Private>
-		</Reference>
-		<Reference Include="AeccDbMgd">
-			<HintPath>..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\C3D\AeccDbMgd.dll</HintPath>
-			<Private>False</Private>
-		</Reference>
-	</ItemGroup>
-
 	<!-- ПОДКЛЮЧЕННЫЕ ПАКЕТЫ РАСШИРЕНИЙ -->
 	<ItemGroup>
 		<!-- Официальный пакет Microsoft для нативного чтения и записи .xlsx -->
@@ -54,5 +27,24 @@
 		<PackageReference Include="ExcelDataReader" Version="3.7.0" />
 		<PackageReference Include="ExcelDataReader.DataSet" Version="3.7.0" />
 	</ItemGroup>
-
+	<ItemGroup>
+	  <Reference Include="accoremgd">
+	    <HintPath>C:\Program Files\Autodesk\AutoCAD 2025\accoremgd.dll</HintPath>
+	  </Reference>
+	  <Reference Include="Acdbmgd">
+	    <HintPath>C:\Program Files\Autodesk\AutoCAD 2025\acdbmgd.dll</HintPath>
+	  </Reference>
+	  <Reference Include="Acmgd">
+	    <HintPath>C:\Program Files\Autodesk\AutoCAD 2025\acmgd.dll</HintPath>
+	  </Reference>
+	  <Reference Include="AecBaseMgd">
+	    <HintPath>C:\Program Files\Autodesk\AutoCAD 2025\ACA\AecBaseMgd.dll</HintPath>
+	  </Reference>
+	  <Reference Include="AeccDbMgd">
+	    <HintPath>C:\Program Files\Autodesk\AutoCAD 2025\C3D\AeccDbMgd.dll</HintPath>
+	  </Reference>
+	  <Reference Include="AecPropDataMgd">
+	    <HintPath>C:\Program Files\Autodesk\AutoCAD 2025\ACA\AecPropDataMgd.dll</HintPath>
+	  </Reference>
+	</ItemGroup>
 </Project>

@@ -12,7 +12,6 @@ using Autodesk.Aec.PropertyData.DatabaseServices;
 [assembly: CommandClass(typeof(Civil3D_FloraPlugin.FloraPropertyFiller))]
 namespace Civil3D_FloraPlugin
 {
-    // 1. Модель строки Excel согласно структуре таблицы озеленения
     public class ExcelFloraRow
     {
         public string Id { get; set; } = string.Empty;
@@ -29,7 +28,7 @@ namespace Civil3D_FloraPlugin
         public string ParamL { get; set; } = string.Empty;
         public string ParamXl { get; set; } = string.Empty;
     }
-    // 2. Класс для бинарного чтения Excel (Zero-Graphics поток)
+
     public static class ExcelFloraReader
     {
         public static Dictionary<string, ExcelFloraRow> ReadFloraTable(string filePath, Editor ed)
@@ -38,11 +37,9 @@ namespace Civil3D_FloraPlugin
             try
             {
                 System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
-
                 using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 using (var reader = ExcelReaderFactory.CreateReader(stream))
                 {
-                    // Пропуск первых двух служебных строк (шапки таблицы)
                     if (!reader.Read() || !reader.Read()) return registry;
 
                     while (reader.Read())
@@ -64,33 +61,26 @@ namespace Civil3D_FloraPlugin
                             ParamS = reader.GetValue(9)?.ToString()?.Trim() ?? string.Empty,
                             ParamM = reader.GetValue(10)?.ToString()?.Trim() ?? string.Empty,
                             ParamL = reader.GetValue(11)?.ToString()?.Trim() ?? string.Empty,
-                            ParamXl = reader.GetValue(12)?.ToString()?.Trim() ?? string.Empty // Ошибка CS1003 исправлена
+                            ParamXl = reader.GetValue(12)?.ToString()?.Trim() ?? string.Empty
                         };
 
                         if (!registry.ContainsKey(rawId)) registry.Add(rawId, row);
                     }
                 }
             }
-            catch (System.Exception ex)
-            {
-                ed.WriteMessage($"\n[Ошибка FloraExcel]: {ex.Message}");
-            }
+            catch (System.Exception ex) { ed.WriteMessage($"\n[Ошибка FloraExcel]: {ex.Message}"); }
             return registry;
         }
     }
-    // 3. Основной класс плагина Озеленения и точка входа для Civil 3D
+
     public class FloraPropertyFiller : IExtensionApplication
     {
-        // Имя набора характеристик зафиксировано строго со скриншота диспетчера стилей
         public const string PropertySetName = "01_Деревья и кусты (стандарт)";
 
         public void Initialize()
         {
             var ed = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument?.Editor;
-            if (ed != null)
-            {
-                ed.WriteMessage($"\n>>> Модуль Озеленения загружен успешно! Команда: FLORA_FILL_PROPERTIES <<<");
-            }
+            if (ed != null) ed.WriteMessage($"\n>>> Модуль Блоков (Деревья) загружен! Команда: FLORA_FILL_PROPERTIES <<<");
         }
 
         public void Terminate() { }
@@ -103,12 +93,9 @@ namespace Civil3D_FloraPlugin
             Editor ed = activeDoc.Editor;
             Database db = activeDoc.Database;
 
-            // Шаг 1: Запрос файла ведомости у пользователя
             string targetPath = string.Empty;
-            using (OpenFileDialog dialog = new OpenFileDialog())
+            using (OpenFileDialog dialog = new OpenFileDialog { Filter = "Книга Excel (*.xlsx)|*.xlsx", Title = "Укажите файл базы данных Озеленения" })
             {
-                dialog.Filter = "Книга Excel (*.xlsx)|*.xlsx";
-                dialog.Title = "Укажите файл базы данных Озеленения";
                 if (dialog.ShowDialog() != DialogResult.OK) return;
                 targetPath = dialog.FileName;
             }
@@ -116,11 +103,10 @@ namespace Civil3D_FloraPlugin
             var databaseMap = ExcelFloraReader.ReadFloraTable(targetPath, ed);
             if (databaseMap == null || databaseMap.Count == 0)
             {
-                ed.WriteMessage("\n[Отмена] Выбранная таблица пуста или занята другим процессом.");
+                ed.WriteMessage("\n[Отмена] Выбранная таблица пуста.");
                 return;
             }
 
-            // Шаг 2: Выбор элементов на чертеже
             ed.WriteMessage($"\nВыберите блоки для привязки характеристик '{PropertySetName}'...");
             PromptSelectionResult selResult = ed.GetSelection();
             if (selResult.Status != PromptStatus.OK || selResult.Value == null) return;
@@ -134,7 +120,7 @@ namespace Civil3D_FloraPlugin
                     var psdDictionary = new DictionaryPropertySetDefinitions(db);
                     if (!psdDictionary.Has(PropertySetName, trans))
                     {
-                        ed.WriteMessage($"\n[Ошибка] Набор '{PropertySetName}' не обнаружен в данном DWG-шаблоне!");
+                        ed.WriteMessage($"\n[Ошибка] Набор '{PropertySetName}' не обнаружен!");
                         trans.Commit();
                         return;
                     }
@@ -214,7 +200,6 @@ namespace Civil3D_FloraPlugin
                     trans.Commit();
                 }
             }
-
             ed.WriteMessage($"\n[Успех] Заполнение завершено. Обработано блоков озеленения: {alteredObjectsCount}");
             ed.UpdateScreen();
         }
