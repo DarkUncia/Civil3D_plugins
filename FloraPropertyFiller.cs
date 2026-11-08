@@ -9,8 +9,9 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.Aec.PropertyData.DatabaseServices;
 
-[assembly: CommandClass(typeof(Civil3D_FloraPlugin.FloraPropertyFiller))]
-namespace Civil3D_FloraPlugin
+// ИСПРАВЛЕНО: Пространство имен заменено на Civil3D_plugins
+[assembly: CommandClass(typeof(Civil3D_plugins.FloraPropertyFiller))]
+namespace Civil3D_plugins
 {
     public class ExcelFloraRow
     {

@@ -11,10 +11,10 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.Aec.PropertyData.DatabaseServices;
 using Autodesk.AutoCAD.Colors;
 
-[assembly: CommandClass(typeof(Civil3D_FloraPlugin.FloraHatchPropertyFiller))]
-namespace Civil3D_FloraPlugin
+// ИСПРАВЛЕНО: Пространство имен заменено на Civil3D_plugins
+[assembly: CommandClass(typeof(Civil3D_plugins.FloraHatchPropertyFiller))]
+namespace Civil3D_plugins
 {
-    // Модель строки
     public class FloraBIM_HatchRow
     {
         public string ColorRGB { get; set; } = string.Empty;
@@ -35,7 +35,6 @@ namespace Civil3D_FloraPlugin
         public string HatchPattern { get; set; } = string.Empty;
     }
 
-    // Парсер
     public static class FloraHatchExcelReader
     {
         public static string NormalizeRgbString(string rawColor)
@@ -149,7 +148,6 @@ namespace Civil3D_FloraPlugin
         }
     }
 
-    // Основной класс для 3D и Штриховок
     public class FloraHatchPropertyFiller : IExtensionApplication
     {
         public const string TargetPsdName = "02_Живая изгородь. Многолетние цветы. Злаки. Миксы";
@@ -205,7 +203,6 @@ namespace Civil3D_FloraPlugin
                     if (selected == null) continue;
                     DBObject currentDbObj = trans.GetObject(selected.ObjectId, OpenMode.ForWrite);
 
-                    // Ищем только 3D-тела, Поверхности и Штриховки
                     if (!(currentDbObj is Hatch || currentDbObj is Solid3d || currentDbObj is Autodesk.Civil.DatabaseServices.Surface)) continue;
 
                     string colorKey = GetObjectColorKey(currentDbObj, trans);

@@ -10,8 +10,11 @@ using Autodesk.AutoCAD.ApplicationServices;
 [assembly: CommandClass(typeof(Civil3D_plugins.C3D_ExportClasses))]
 [assembly: CommandClass(typeof(Civil3D_plugins.CogoFromGeometryCommands))]
 
-// Новая изолированная команда заполнения НХ
-[assembly: CommandClass(typeof(Civil3D_plugins.MafOnlyPropertyFiller))]
+// Команды для работы с НХ (Наборами Характеристик)
+[assembly: CommandClass(typeof(Civil3D_plugins.MafOnlyPropertyFiller))]       // МАФ (MAF_FILL_ATTRIBUTES)
+[assembly: CommandClass(typeof(Civil3D_plugins.FloraPropertyFiller))]         // Озеленение: Блоки (FLORA_FILL_PROPERTIES)
+[assembly: CommandClass(typeof(Civil3D_plugins.FloraHatchPropertyFiller))]    // Озеленение: Штриховки/3D (FLORA_HATCH_FILL_PROPERTIES)
+[assembly: CommandClass(typeof(Civil3D_plugins.LightingPropertyFiller))]      // Освещение (LIGHTING_FILL_ATTRIBUTES) <--- ДОБАВЛЕНО
 
 namespace Civil3D_plugins
 {
@@ -30,7 +33,7 @@ namespace Civil3D_plugins
             if (doc != null)
             {
                 doc.Editor.WriteMessage("\n>>> Плагин Civil3D_plugins успешно загружен! <<<");
-                doc.Editor.WriteMessage("\n>>> Используйте команду: MAF_FILL_ATTRIBUTES <<<");
+                doc.Editor.WriteMessage("\n>>> Доступные команды: FLORA_FILL_PROPERTIES, FLORA_HATCH_FILL_PROPERTIES, MAF_FILL_ATTRIBUTES, LIGHTING_FILL_ATTRIBUTES <<<");
             }
         }
 
