@@ -9,6 +9,8 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.Aec.PropertyData.DatabaseServices;
 using ExcelDataReader;
+using AcDb = Autodesk.AutoCAD.DatabaseServices;
+using CivilDb = Autodesk.Civil.DatabaseServices;
 
 [assembly: CommandClass(typeof(Civil3D_plugins.HatchCoveragePlugin))]
 
@@ -60,7 +62,7 @@ namespace Civil3D_plugins
         };
 
         [CommandMethod("COVERAGE_FILL_PROPERTIES")]
-        public void FillHatchPropertiesFromCurrentDoc()
+        public void FillCoveragePropertiesFromCurrentDoc()
         {
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
@@ -87,11 +89,15 @@ namespace Civil3D_plugins
             }
 
             int processedCount = 0;
+            int hatchCount = 0;
+            int solidCount = 0;
+            int surfaceCount = 0;
+
             StringBuilder logBuilder = new StringBuilder();
-            logBuilder.AppendLine($"--- ЛОГ ОБРАБОТКИ ШТРИХОВОК ---");
+            logBuilder.AppendLine("--- ЛОГ ОБРАБОТКИ ОБЪЕКТОВ ПОКРЫТИЙ ---");
             logBuilder.AppendLine($"Дата и время: {DateTime.Now}");
             logBuilder.AppendLine($"Файл Excel: {excelPath}");
-            logBuilder.AppendLine($"Загружено строк из Excel: {excelData.Count}\n");
+            logBuilder.AppendLine($"Загружено строк из Excel (начиная с 3-й строки): {excelData.Count}\n");
 
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
@@ -101,73 +107,34 @@ namespace Civil3D_plugins
 
                 foreach (ObjectId objId in ms)
                 {
-                    Hatch hatch = tr.GetObject(objId, OpenMode.ForWrite) as Hatch;
-                    if (hatch == null) continue;
+                    AcDb.DBObject dbObj = tr.GetObject(objId, OpenMode.ForRead);
+                    if (!TryExtractTargetEntity(dbObj, out AcDb.Entity targetEntity, out string objectTypeLabel))
+                        continue;
 
-                    string layerName = hatch.Layer.Trim();
+                    string layerName = (targetEntity.Layer ?? "").Trim();
+                    if (!excelData.TryGetValue(layerName, out ExcelCoverageRow excelRow))
+                        continue;
 
-                    if (excelData.TryGetValue(layerName, out ExcelCoverageRow excelRow))
+                    string targetPsdName = excelRow.GetTargetPsdName();
+
+                    if (!psdDict.Has(targetPsdName, tr))
                     {
-                        string targetPsdName = excelRow.GetTargetPsdName();
+                        logBuilder.AppendLine($"[ОШИБКА] В чертеже отсутствует определение Набора Характеристик: {targetPsdName} (объект {objectTypeLabel}, слой: {layerName})");
+                        continue;
+                    }
 
-                        if (!psdDict.Has(targetPsdName, tr))
-                        {
-                            logBuilder.AppendLine($"[ОШИБКА] В чертеже отсутствует определение Набора Характеристик: {targetPsdName}");
-                            continue;
-                        }
+                    targetEntity = (AcDb.Entity)tr.GetObject(objId, OpenMode.ForWrite);
+                    ObjectId targetPsdId = psdDict.GetAt(targetPsdName);
 
-                        ObjectId targetPsdId = psdDict.GetAt(targetPsdName);
+                    bool applied = ApplyCoveragePropertySet(targetEntity, targetPsdId, psdDict, tr, excelRow, logBuilder);
+                    if (applied)
+                    {
+                        processedCount++;
+                        if (targetEntity is Hatch) hatchCount++;
+                        else if (targetEntity is Solid3d) solidCount++;
+                        else if (targetEntity is CivilDb.Surface) surfaceCount++;
 
-                        // Очистка старых НХ
-                        foreach (string psdName in AllPsdNames)
-                        {
-                            if (psdDict.Has(psdName, tr))
-                            {
-                                try
-                                {
-                                    PropertyDataServices.RemovePropertySet(hatch, psdDict.GetAt(psdName));
-                                }
-                                catch { }
-                            }
-                        }
-
-                        // Назначение актуального НХ
-                        PropertyDataServices.AddPropertySet(hatch, targetPsdId);
-
-                        ObjectId psId = ObjectId.Null;
-                        foreach (ObjectId id in PropertyDataServices.GetPropertySets(hatch))
-                        {
-                            var testPs = (PropertySet)tr.GetObject(id, OpenMode.ForRead);
-                            if (testPs != null && testPs.PropertySetDefinition == targetPsdId)
-                            {
-                                psId = id;
-                                break;
-                            }
-                        }
-
-                        if (!psId.IsNull)
-                        {
-                            var ps = (PropertySet)tr.GetObject(psId, OpenMode.ForWrite);
-                            if (ps != null)
-                            {
-                                SetProperty(ps, "Название_покрытия", excelRow.CoverageId);
-                                SetProperty(ps, "Код_по_классификатору_зданий", excelRow.CodeClassifier);
-                                SetProperty(ps, "Код_по_классификатору_материалов", excelRow.CodeMaterial);
-                                SetProperty(ps, "Позиция_Тип", excelRow.PositionType);
-                                SetProperty(ps, "Обозначение", excelRow.Designation);
-                                SetProperty(ps, "Наименование", excelRow.Name);
-                                SetProperty(ps, "Пирог_покрытия_со_слоями", excelRow.PieLayers);
-                                SetProperty(ps, "Толщина_покрытия", excelRow.Thickness);
-
-                                if (!SetProperty(ps, "Тип_покрытия", excelRow.Type))
-                                {
-                                    SetProperty(ps, "Тип", excelRow.Type);
-                                }
-
-                                processedCount++;
-                                logBuilder.AppendLine($"[УСПЕХ] Handle: {hatch.Handle} | Слой: {layerName} -> Назначен PSD: {targetPsdName}");
-                            }
-                        }
+                        logBuilder.AppendLine($"[УСПЕХ] Тип: {objectTypeLabel} | Handle: {targetEntity.Handle} | Слой: {layerName} -> Назначен PSD: {targetPsdName}");
                     }
                 }
 
@@ -178,7 +145,10 @@ namespace Civil3D_plugins
             string logPath = Path.Combine(desktopPath, "Отработка_Покрытий_Лог.txt");
             File.WriteAllText(logPath, logBuilder.ToString(), Encoding.UTF8);
 
-            ed.WriteMessage($"\n[ГОТОВО] Обработано штриховок: {processedCount}. Подробный лог сохранен на Рабочий стол.");
+            ed.WriteMessage(
+                $"\n[ГОТОВО] Обработано объектов: {processedCount} " +
+                $"(Штриховки: {hatchCount}, 3D-тела: {solidCount}, Поверхности: {surfaceCount}). " +
+                $"Подробный лог сохранён на Рабочий стол.");
         }
 
         [CommandMethod("COVERAGE_MATCH_PROPERTIES")]
@@ -290,6 +260,97 @@ namespace Civil3D_plugins
             }
         }
 
+        private bool TryExtractTargetEntity(AcDb.DBObject dbObj, out AcDb.Entity entity, out string typeLabel)
+        {
+            entity = null;
+            typeLabel = null;
+
+            if (dbObj is Hatch hatch)
+            {
+                entity = hatch;
+                typeLabel = "Hatch";
+                return true;
+            }
+
+            if (dbObj is Solid3d solid)
+            {
+                entity = solid;
+                typeLabel = "Solid3d";
+                return true;
+            }
+
+            if (dbObj is CivilDb.Surface surface)
+            {
+                entity = surface as AcDb.Entity;
+                typeLabel = surface.GetType().Name;
+                return entity != null;
+            }
+
+            return false;
+        }
+
+        private bool ApplyCoveragePropertySet(
+            AcDb.Entity targetEntity,
+            ObjectId targetPsdId,
+            DictionaryPropertySetDefinitions psdDict,
+            Transaction tr,
+            ExcelCoverageRow excelRow,
+            StringBuilder logBuilder)
+        {
+            foreach (string psdName in AllPsdNames)
+            {
+                if (psdDict.Has(psdName, tr))
+                {
+                    try
+                    {
+                        PropertyDataServices.RemovePropertySet(targetEntity, psdDict.GetAt(psdName));
+                    }
+                    catch (System.Exception ex)
+                    {
+                        logBuilder.AppendLine($"[ПРЕДУПРЕЖДЕНИЕ] Не удалось удалить НХ '{psdName}' с объекта {targetEntity.Handle}: {ex.Message}");
+                    }
+                }
+            }
+
+            PropertyDataServices.AddPropertySet(targetEntity, targetPsdId);
+
+            ObjectId psId = ObjectId.Null;
+            foreach (ObjectId id in PropertyDataServices.GetPropertySets(targetEntity))
+            {
+                var testPs = (PropertySet)tr.GetObject(id, OpenMode.ForRead);
+                if (testPs != null && testPs.PropertySetDefinition == targetPsdId)
+                {
+                    psId = id;
+                    break;
+                }
+            }
+
+            if (psId.IsNull)
+            {
+                logBuilder.AppendLine($"[ОШИБКА] Не удалось получить созданный PropertySet для объекта {targetEntity.Handle}.");
+                return false;
+            }
+
+            var ps = (PropertySet)tr.GetObject(psId, OpenMode.ForWrite);
+            if (ps == null) return false;
+
+            SetProperty(ps, "Название_покрытия", excelRow.CoverageId, logBuilder);
+            SetProperty(ps, "Код_по_классификатору_зданий", excelRow.CodeClassifier, logBuilder);
+            SetProperty(ps, "Код_по_классификатору_материалов", excelRow.CodeMaterial, logBuilder);
+            SetProperty(ps, "Позиция_Тип", excelRow.PositionType, logBuilder);
+            SetProperty(ps, "Обозначение", excelRow.Designation, logBuilder);
+            SetProperty(ps, "Наименование", excelRow.Name, logBuilder);
+            SetProperty(ps, "Пирог_покрытия_со_слоями", excelRow.PieLayers, logBuilder);
+            SetProperty(ps, "Толщина_покрытия", excelRow.Thickness, logBuilder);
+
+            if (!SetProperty(ps, "Тип_покрытия", excelRow.Type, logBuilder))
+            {
+                SetProperty(ps, "Тип", excelRow.Type, logBuilder);
+            }
+
+            return true;
+        }
+
         private Dictionary<string, ExcelCoverageRow> LoadCoverageFromExcel(string filePath, Editor ed)
         {
             var result = new Dictionary<string, ExcelCoverageRow>(StringComparer.OrdinalIgnoreCase);
@@ -308,10 +369,14 @@ namespace Civil3D_plugins
                         var table = resultDataSet.Tables[0];
                         int rowCount = table.Rows.Count;
 
-                        for (int r = 1; r < rowCount; r++)
+                        // Начинаем с r = 2 (3-я строка Excel: 1-я — заголовки, 2-я — пример заполнения)
+                        for (int r = 2; r < rowCount; r++)
                         {
                             string coverageId = table.Rows[r][0]?.ToString()?.Trim();
                             if (string.IsNullOrEmpty(coverageId)) continue;
+
+                            if (coverageId.StartsWith("Пример заполнения", StringComparison.OrdinalIgnoreCase))
+                                continue;
 
                             var row = new ExcelCoverageRow
                             {
@@ -343,29 +408,60 @@ namespace Civil3D_plugins
             return result;
         }
 
-        private bool SetProperty(PropertySet ps, string propName, object val)
+        private bool SetProperty(PropertySet ps, string propName, object val, StringBuilder logBuilder = null)
         {
             if (ps == null || val == null) return false;
+
             try
             {
                 Transaction tr = ps.Database.TransactionManager.TopTransaction;
-                var psd = (PropertySetDefinition)tr.GetObject(ps.PropertySetDefinition, OpenMode.ForRead);
+                if (tr == null) return false;
+
+                var psd = tr.GetObject(ps.PropertySetDefinition, OpenMode.ForRead) as PropertySetDefinition;
                 if (psd == null) return false;
 
                 foreach (PropertyDefinition pd in psd.Definitions)
                 {
+                    if (pd.Automatic) continue;
+
                     if (pd.Name.Equals(propName, StringComparison.OrdinalIgnoreCase))
                     {
-                        PropertySetData pData = ps.PropertySetData[pd.Id];
-                        if (pData != null)
+                        PropertySetData pData = null;
+                        try
                         {
-                            pData.SetData(val.ToString());
-                            return true;
+                            pData = ps.PropertySetData[pd.Id];
                         }
+                        catch
+                        {
+                            for (int i = 0; i < ps.PropertySetData.Count; i++)
+                            {
+                                var item = ps.PropertySetData[i];
+                                if (item != null && item.Id == pd.Id)
+                                {
+                                    pData = item;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (pData == null)
+                        {
+                            logBuilder?.AppendLine($"  [WARN] Не найдены данные для свойства '{pd.Name}'");
+                            return false;
+                        }
+
+                        pData.SetData(val.ToString());
+                        return true;
                     }
                 }
+
+                logBuilder?.AppendLine($"  [WARN] В НХ '{psd.Name}' не найдено свойство '{propName}'");
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                logBuilder?.AppendLine($"  [ERR] Ошибка записи свойства '{propName}' ('{val}'): {ex.Message}");
+            }
+
             return false;
         }
     }
